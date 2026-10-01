@@ -1,0 +1,35 @@
+{
+  "조회시각": "2026-09-29 11:42",
+  "종목코드": "095340",
+  "주가": {
+    "url": "https://wcomp.fnguide.com/CompanyInfo/Snapshot?cmp_cd=095340",
+    "종가_원": 203500.0,
+    "종가_기준일": "2026/09/28"
+  },
+  "컨센서스_FY1": {
+    "url": "https://wcomp.fnguide.com/CompanyInfo/getSnpFinancial?cmp_cd=095340&consol_typ=C&freq_typ=A",
+    "연도": "2026/12",
+    "재무제표": "연결",
+    "EPS_원": 4234.08,
+    "BPS_원": 29487.28,
+    "FnGuide_PER": 48.06,
+    "FnGuide_PBR": 6.9,
+    "매출액_억원": 3143.5,
+    "영업이익_억원": 1033.5
+  },
+  "다음연도_밸류에이션": {
+    "연도": "2026/12",
+    "PER": 48.06,
+    "PBR": 6.9,
+    "산출": "FnGuide 종가 / FY1 컨센서스 EPS(또는 BPS)"
+  },
+  "업종": {
+    "url": "https://wcomp.fnguide.com/CompanyInfo/SectorAnalysis?cmp_cd=095340",
+    "업종명": "WI26 반도체",
+    "PER": 14.33,
+    "PER_기준연도": "2025",
+    "PBR": 2.2,
+    "PBR_기준연도": "2025",
+    "산출": "업종 구성종목 시가총액(기말) / 순이익(지배) 또는 순자산 — 최근 결산 연도 실적 기준"
+  }
+}
