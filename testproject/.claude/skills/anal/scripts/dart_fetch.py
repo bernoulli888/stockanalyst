@@ -1,12 +1,12 @@
-"""DART 정기보고서(분기·반기·사업) 재무 숫자와 원문을 받아 저장하고 분기 실적표를 만든다.
+"""판정에 쓸 DART 정기보고서(최근 사업보고서 + 올해 최신 보고서)를 받아 저장하고 annual.json을 만든다.
 
-사용: py dart_fetch.py <회사명|종목코드> [--count 8]
+사용: py dart_fetch.py <회사명|종목코드>
 결과: data/국내/<종목코드>_<회사명>/dart/
   company.json        회사 기본정보
   reports.json        받은 보고서 목록 (접수번호, DART 링크)
   재무_<연도>_<보고서>.json   OpenDART 전체 재무제표 원자료
   원문/<연도>_<보고서>.txt    보고서 원문 텍스트 (질의 근거용)
-  quarters.json       분기별 매출액·영업이익 (분석 입력)
+  annual.json         3개 연도 매출액·영업이익과 올해 누적 실적 (분석 입력)
 """
 import argparse
 import html
@@ -215,54 +215,73 @@ def pick(fin, ids, names):
     return None
 
 
-def build_quarters(fins):
-    by = {(f["year"], f["reprt_code"]): f for f in fins if f}
-    years = sorted({y for y, _ in by})
-    out = []
-    for item, ids, names in (("매출액", REV_IDS, REV_NMS), ("영업이익", OI_IDS, OI_NMS)):
-        for y in years:
-            rows = {c: (by[(y, c)], pick(by[(y, c)], ids, names))
-                    for c in REPRT if (y, c) in by}
+def _src(f, picked, fields):
+    return {"보고서": f"{f['year']} {f['report']}", "접수번호": f["rcept_no"], "url": f["url"],
+            "재무제표": fs_name(f),
+            "계정": {k: (x["account_nm"] if x else None) for k, x in picked.items()},
+            "필드": fields}
 
-            def cell(code, field):
-                if code not in rows or rows[code][1] is None:
-                    return None
-                return amount(rows[code][1].get(field))
 
-            def src(code, how):
-                f, x = rows[code]
-                return {"보고서": f"{y} {f['report']}", "접수번호": f["rcept_no"],
-                        "재무제표": "연결" if f["fs_div"] == "CFS" else "별도",
-                        "계정": x["account_nm"] if x else None, "산출": how}
+def fs_name(f):
+    return "연결" if f["fs_div"] == "CFS" else "별도"
 
-            q = {}
-            if cell("11013", "thstrm_amount") is not None:
-                q[1] = (cell("11013", "thstrm_amount"), [src("11013", "1분기 3개월 금액")])
-            if cell("11012", "thstrm_amount") is not None:
-                q[2] = (cell("11012", "thstrm_amount"), [src("11012", "2분기 3개월 금액")])
-            if cell("11014", "thstrm_amount") is not None:
-                q[3] = (cell("11014", "thstrm_amount"), [src("11014", "3분기 3개월 금액")])
-            annual, cum3 = cell("11011", "thstrm_amount"), cell("11014", "thstrm_add_amount")
-            if annual is not None and cum3 is not None:
-                q[4] = (annual - cum3, [src("11011", "연간 금액"),
-                                        src("11014", "3분기 누적 금액을 빼서 4분기 산출")])
-            for n, (v, s) in q.items():
-                out.append({"분기": f"{y}Q{n}", "연도": y, "분기번호": n,
-                            "항목": item, "금액_원": v, "근거": s})
-    return sorted(out, key=lambda r: (r["항목"], r["연도"], r["분기번호"]))
+
+def _pick_both(f):
+    return {"매출액": pick(f, REV_IDS, REV_NMS), "영업이익": pick(f, OI_IDS, OI_NMS)}
+
+
+def build_annual(annual_fin, ytd_fin):
+    """사업보고서의 3개 연도 실적과 올해 보고서의 누적 실적을 annual.json 형식으로 만든다."""
+    out = {"재무제표": None, "연간": [], "연간_근거": None, "올해누적": None}
+    if annual_fin:
+        picked = _pick_both(annual_fin)
+
+        def val(item, field):
+            x = picked[item]
+            return amount(x.get(field)) if x else None
+
+        y = annual_fin["year"]
+        for offset, field in ((2, "bfefrmtrm_amount"), (1, "frmtrm_amount"), (0, "thstrm_amount")):
+            out["연간"].append({"연도": y - offset, "매출액": val("매출액", field),
+                               "영업이익": val("영업이익", field)})
+        out["연간_근거"] = _src(annual_fin, picked,
+                              "전전기 bfefrmtrm_amount, 전기 frmtrm_amount, 당기 thstrm_amount")
+        out["재무제표"] = fs_name(annual_fin)
+    if ytd_fin:
+        picked = _pick_both(ytd_fin)
+        used = set()
+
+        def first(x, fields):
+            for fld in fields:
+                v = amount(x.get(fld)) if x else None
+                if v is not None:
+                    used.add(fld)
+                    return v
+            return None
+
+        cur = ("thstrm_add_amount", "thstrm_amount")
+        prev = ("frmtrm_add_amount", "frmtrm_q_amount")
+        ytd = {"연도": ytd_fin["year"], "보고서": ytd_fin["report"]}
+        for item, x in picked.items():
+            ytd[item] = {"당기": first(x, cur), "전년동기": first(x, prev)}
+        ytd["근거"] = _src(ytd_fin, picked,
+                         "당기 " + "/".join(f for f in cur if f in used) + ", 전년동기 "
+                         + "/".join(f for f in prev if f in used))
+        out["올해누적"] = ytd
+        out["재무제표"] = out["재무제표"] or fs_name(ytd_fin)
+    return out
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("company", help="회사명 또는 종목코드")
-    ap.add_argument("--count", type=int, default=8, help="받을 최근 정기보고서 수 (기본 8)")
     a = ap.parse_args()
 
     corp = resolve(a.company)
     info = dart_json("company.json", corp_code=corp["corp_code"])
     if info.get("acc_mt") != "12":
         die(f"{corp['corp_name']}은(는) {info.get('acc_mt')}월 결산입니다. "
-            "현재는 12월 결산 법인만 분기 계산을 지원합니다.")
+            "현재는 12월 결산 법인만 지원합니다.")
     base = DOMESTIC / f"{corp['stock_code']}_{corp['corp_name']}"
     dart_dir = base / "dart"
     (base / "메모").mkdir(parents=True, exist_ok=True)
@@ -270,22 +289,24 @@ def main():
         "corp_code", "corp_name", "stock_code", "ceo_nm", "corp_cls", "induty_code",
         "est_dt", "acc_mt", "hm_url")})
 
-    reps = periodic_reports(corp["corp_code"], a.count)
+    annual, ytd = select_reports(periodic_reports(corp["corp_code"], 8))
+    reps = [r for r in (annual, ytd) if r]
     if not reps:
         die("최근 정기보고서를 찾지 못했습니다.")
     write_json(dart_dir / "reports.json", reps)
-    print(f"{corp['corp_name']}({corp['stock_code']}) 정기보고서 {len(reps)}건")
+    print(f"{corp['corp_name']}({corp['stock_code']}) 판정용 정기보고서 {len(reps)}건")
 
-    fins = []
+    fins = {}
     for r in reps:
         stem = f"{r['year']}_{r['report']}"
         print(f"  · {r['report_nm']} ({r['rcept_no']})")
-        fins.append(fetch_fin(corp["corp_code"], r, dart_dir / f"재무_{stem}.json"))
+        fins[r["rcept_no"]] = fetch_fin(corp["corp_code"], r, dart_dir / f"재무_{stem}.json")
         fetch_doc(r, dart_dir / "원문" / f"{stem}.txt")
 
-    quarters = build_quarters(fins)
-    write_json(dart_dir / "quarters.json", quarters)
-    print(f"분기 실적 {len(quarters)}건 → {dart_dir / 'quarters.json'}")
+    data = build_annual(fins.get(annual["rcept_no"]) if annual else None,
+                        fins.get(ytd["rcept_no"]) if ytd else None)
+    write_json(dart_dir / "annual.json", data)
+    print(f"연간·올해 누적 실적 → {dart_dir / 'annual.json'}")
     print(f"저장 위치: {base}")
 
 

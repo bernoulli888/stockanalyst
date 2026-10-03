@@ -26,5 +26,76 @@ class SelectReportsTest(unittest.TestCase):
         self.assertEqual(ytd, rep(2026, "11013"))
 
 
+def fin(year, report, rows):
+    return {"year": year, "report": report, "rcept_no": f"R{year}", "url": f"U{year}",
+            "fs_div": "CFS", "list": rows}
+
+
+def row(account_id, name, **amounts):
+    return {"sj_div": "CIS", "account_id": account_id, "account_nm": name, **amounts}
+
+
+ANNUAL_2025 = fin(2025, "사업보고서", [
+    row("ifrs-full_Revenue", "수익(매출액)", bfefrmtrm_amount="95650538591",
+        frmtrm_amount="69184238320", thstrm_amount="82379163292"),
+    row("dart_OperatingIncomeLoss", "영업이익(손실)", bfefrmtrm_amount="8017318466",
+        frmtrm_amount="-5608802365", thstrm_amount="17391515095"),
+])
+HALF_2026 = fin(2026, "반기보고서", [
+    row("ifrs-full_Revenue", "수익", thstrm_amount="18555106001",
+        thstrm_add_amount="31184245863", frmtrm_q_amount="17073864677",
+        frmtrm_add_amount="35893769749"),
+    row("dart_OperatingIncomeLoss", "영업이익(손실)", thstrm_amount="5730276924",
+        thstrm_add_amount="7188199287", frmtrm_q_amount="6858158688",
+        frmtrm_add_amount="10805584145"),
+])
+
+
+class BuildAnnualTest(unittest.TestCase):
+    def test_build_annual_full(self):
+        d = dart_fetch.build_annual(ANNUAL_2025, HALF_2026)
+        self.assertEqual(d["재무제표"], "연결")
+        self.assertEqual(d["연간"], [
+            {"연도": 2023, "매출액": 95650538591, "영업이익": 8017318466},
+            {"연도": 2024, "매출액": 69184238320, "영업이익": -5608802365},
+            {"연도": 2025, "매출액": 82379163292, "영업이익": 17391515095},
+        ])
+        self.assertEqual(d["연간_근거"]["접수번호"], "R2025")
+        self.assertEqual(d["올해누적"]["연도"], 2026)
+        self.assertEqual(d["올해누적"]["매출액"], {"당기": 31184245863, "전년동기": 35893769749})
+        self.assertEqual(d["올해누적"]["영업이익"], {"당기": 7188199287, "전년동기": 10805584145})
+
+    def test_build_annual_q1_fallback(self):
+        q1 = fin(2026, "1분기보고서", [
+            row("ifrs-full_Revenue", "수익(매출액)", thstrm_amount="12629139862",
+                thstrm_add_amount="", frmtrm_q_amount="18819905072", frmtrm_add_amount=""),
+            row("dart_OperatingIncomeLoss", "영업이익(손실)", thstrm_amount="1457922363",
+                thstrm_add_amount="", frmtrm_q_amount="3947425457", frmtrm_add_amount=""),
+        ])
+        d = dart_fetch.build_annual(ANNUAL_2025, q1)
+        self.assertEqual(d["올해누적"]["매출액"], {"당기": 12629139862, "전년동기": 18819905072})
+        self.assertIn("thstrm_amount", d["올해누적"]["근거"]["필드"])
+
+    def test_build_annual_missing_year(self):
+        f = fin(2025, "사업보고서", [
+            row("ifrs-full_Revenue", "수익(매출액)", frmtrm_amount="10", thstrm_amount="20"),
+            row("dart_OperatingIncomeLoss", "영업이익(손실)", frmtrm_amount="1", thstrm_amount="2"),
+        ])
+        d = dart_fetch.build_annual(f, None)
+        self.assertIsNone(d["연간"][0]["매출액"])
+        self.assertEqual(d["연간"][2]["매출액"], 20)
+        self.assertIsNone(d["올해누적"])
+
+    def test_build_annual_account_not_found(self):
+        f = fin(2025, "사업보고서", [row("x", "이자수익", thstrm_amount="5")])
+        d = dart_fetch.build_annual(f, None)
+        self.assertEqual([y["매출액"] for y in d["연간"]], [None, None, None])
+        self.assertEqual([y["영업이익"] for y in d["연간"]], [None, None, None])
+
+    def test_build_annual_no_reports(self):
+        self.assertEqual(dart_fetch.build_annual(None, None),
+                         {"재무제표": None, "연간": [], "연간_근거": None, "올해누적": None})
+
+
 if __name__ == "__main__":
     unittest.main()
