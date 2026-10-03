@@ -72,6 +72,7 @@ class BuildAnnualTest(unittest.TestCase):
             row("dart_OperatingIncomeLoss", "영업이익(손실)", thstrm_amount="1457922363",
                 thstrm_add_amount="", frmtrm_q_amount="3947425457", frmtrm_add_amount=""),
         ])
+        q1["reprt_code"] = "11013"
         d = dart_fetch.build_annual(ANNUAL_2025, q1)
         self.assertEqual(d["올해누적"]["매출액"], {"당기": 12629139862, "전년동기": 18819905072})
         self.assertIn("thstrm_amount", d["올해누적"]["근거"]["필드"])
@@ -91,6 +92,28 @@ class BuildAnnualTest(unittest.TestCase):
         d = dart_fetch.build_annual(f, None)
         self.assertEqual([y["매출액"] for y in d["연간"]], [None, None, None])
         self.assertEqual([y["영업이익"] for y in d["연간"]], [None, None, None])
+
+    def test_build_annual_ytd_fin_missing(self):
+        """올해 보고서는 있으나 재무 데이터를 받지 못하면 1-b가 '해당 없음'이 아니라 값 없음이어야 한다."""
+        rep = {"year": 2026, "report": "반기보고서", "rcept_no": "R2026", "url": "U2026"}
+        d = dart_fetch.build_annual(ANNUAL_2025, None, rep)
+        self.assertIsNotNone(d["올해누적"])
+        self.assertEqual(d["올해누적"]["연도"], 2026)
+        self.assertEqual(d["올해누적"]["매출액"], {"당기": None, "전년동기": None})
+        self.assertEqual(d["올해누적"]["근거"]["접수번호"], "R2026")
+
+    def test_build_annual_mixed_fields_none(self):
+        """반기 누적 당기와 전년 3개월을 섞어 비교하지 않는다."""
+        half = fin(2026, "반기보고서", [
+            row("ifrs-full_Revenue", "수익", thstrm_amount="10", thstrm_add_amount="30",
+                frmtrm_q_amount="9", frmtrm_add_amount=""),
+            row("dart_OperatingIncomeLoss", "영업이익(손실)", thstrm_amount="1",
+                thstrm_add_amount="3", frmtrm_q_amount="1", frmtrm_add_amount="2"),
+        ])
+        half["reprt_code"] = "11012"
+        d = dart_fetch.build_annual(ANNUAL_2025, half)
+        self.assertEqual(d["올해누적"]["매출액"], {"당기": None, "전년동기": None})
+        self.assertEqual(d["올해누적"]["영업이익"], {"당기": 3, "전년동기": 2})
 
     def test_build_annual_no_reports(self):
         self.assertEqual(dart_fetch.build_annual(None, None),

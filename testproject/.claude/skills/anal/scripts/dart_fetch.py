@@ -230,8 +230,11 @@ def _pick_both(f):
     return {"매출액": pick(f, REV_IDS, REV_NMS), "영업이익": pick(f, OI_IDS, OI_NMS)}
 
 
-def build_annual(annual_fin, ytd_fin):
-    """사업보고서의 3개 연도 실적과 올해 보고서의 누적 실적을 annual.json 형식으로 만든다."""
+def build_annual(annual_fin, ytd_fin, ytd_report=None):
+    """사업보고서의 3개 연도 실적과 올해 보고서의 누적 실적을 annual.json 형식으로 만든다.
+
+    ytd_report: 올해 보고서 목록 항목. 보고서는 있는데 ytd_fin이 없으면 값 없음으로 기록한다.
+    """
     out = {"재무제표": None, "연간": [], "연간_근거": None, "올해누적": None}
     if annual_fin:
         picked = _pick_both(annual_fin)
@@ -249,26 +252,32 @@ def build_annual(annual_fin, ytd_fin):
         out["재무제표"] = fs_name(annual_fin)
     if ytd_fin:
         picked = _pick_both(ytd_fin)
-        used = set()
-
-        def first(x, fields):
-            for fld in fields:
-                v = amount(x.get(fld)) if x else None
-                if v is not None:
-                    used.add(fld)
-                    return v
-            return None
-
-        cur = ("thstrm_add_amount", "thstrm_amount")
-        prev = ("frmtrm_add_amount", "frmtrm_q_amount")
+        pairs = [("thstrm_add_amount", "frmtrm_add_amount")]
+        if ytd_fin.get("reprt_code") == "11013":  # 1분기는 3개월 = 누적
+            pairs.append(("thstrm_amount", "frmtrm_q_amount"))
+        used = []
         ytd = {"연도": ytd_fin["year"], "보고서": ytd_fin["report"]}
         for item, x in picked.items():
-            ytd[item] = {"당기": first(x, cur), "전년동기": first(x, prev)}
-        ytd["근거"] = _src(ytd_fin, picked,
-                         "당기 " + "/".join(f for f in cur if f in used) + ", 전년동기 "
-                         + "/".join(f for f in prev if f in used))
+            ytd[item] = {"당기": None, "전년동기": None}
+            for cur, prev in pairs:  # 당기와 전년동기는 같은 기간 쌍으로만 고른다
+                c, pv = (amount(x.get(cur)), amount(x.get(prev))) if x else (None, None)
+                if c is not None and pv is not None:
+                    ytd[item] = {"당기": c, "전년동기": pv}
+                    if (cur, prev) not in used:
+                        used.append((cur, prev))
+                    break
+        ytd["근거"] = _src(ytd_fin, picked, "; ".join(f"당기 {c}, 전년동기 {pv}" for c, pv in used)
+                         or "누적 금액 없음")
         out["올해누적"] = ytd
         out["재무제표"] = out["재무제표"] or fs_name(ytd_fin)
+    elif ytd_report:  # 보고서는 있으나 재무 데이터를 받지 못함 → 1-b 판정 불가가 되도록 값 없음으로 둔다
+        empty = {"당기": None, "전년동기": None}
+        out["올해누적"] = {
+            "연도": ytd_report["year"], "보고서": ytd_report["report"],
+            "매출액": dict(empty), "영업이익": dict(empty),
+            "근거": {"보고서": f"{ytd_report['year']} {ytd_report['report']}",
+                   "접수번호": ytd_report["rcept_no"], "url": ytd_report["url"],
+                   "재무제표": None, "계정": {}, "필드": "재무 데이터 없음"}}
     return out
 
 
@@ -304,7 +313,7 @@ def main():
         fetch_doc(r, dart_dir / "원문" / f"{stem}.txt")
 
     data = build_annual(fins.get(annual["rcept_no"]) if annual else None,
-                        fins.get(ytd["rcept_no"]) if ytd else None)
+                        fins.get(ytd["rcept_no"]) if ytd else None, ytd)
     write_json(dart_dir / "annual.json", data)
     print(f"연간·올해 누적 실적 → {dart_dir / 'annual.json'}")
     print(f"저장 위치: {base}")
